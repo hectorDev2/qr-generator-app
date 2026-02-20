@@ -100,6 +100,7 @@ export default function QRGenerator() {
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'done'>('idle');
   const [downloadSize, setDownloadSize] = useState<DownloadSize>(800);
   const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>('png');
+  const [isDragging, setIsDragging] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -412,14 +413,36 @@ export default function QRGenerator() {
   };
 
   // ── Logo upload / remove ─────────────────────────────────────────────────
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const loadLogoFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       setOptions((prev) => ({ ...prev, logo: ev.target?.result as string }));
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    loadLogoFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) loadLogoFile(file);
   };
 
   const handleRemoveLogo = () => {
@@ -543,9 +566,20 @@ export default function QRGenerator() {
           <div>
             <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Logo (opcional)</p>
             {!options.logo ? (
-              <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                <span className="text-2xl mb-1">🖼️</span>
-                <span className="text-sm text-gray-500 dark:text-gray-400">Subir logo</span>
+              <label
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+                  isDragging
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 scale-[1.01]'
+                    : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                }`}
+              >
+                <span className="text-2xl mb-1">{isDragging ? '📂' : '🖼️'}</span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {isDragging ? 'Suelta la imagen aquí' : 'Arrastra o haz clic para subir'}
+                </span>
                 <span className="text-xs text-gray-400 mt-0.5">PNG · JPG · SVG</span>
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
               </label>
