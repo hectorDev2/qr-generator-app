@@ -1,17 +1,19 @@
 # Generador de Códigos QR Personalizado
 
-Una aplicación web moderna y gratuita para generar códigos QR personalizados para tu negocio con logo, colores y estilos personalizables.
+Una aplicación web moderna y gratuita para generar códigos QR personalizados para tu negocio con logo, colores y estilos personalizables. La interfaz ocupa exactamente la ventana del navegador, sin scroll, con un layout compacto y optimizado.
 
 ## Características
 
-- ✨ **Interfaz moderna y responsive** - Diseñada con Tailwind CSS
-- 🎨 **Personalización completa de colores** - Elige los colores que quieras
-- 🖼️ **Logo personalizado** - Agrega el logo de tu negocio en el centro del QR
-- 🎯 **Múltiples estilos** - Cuadrados, puntos o redondeado
-- 📱 **Vista previa en tiempo real** - Ve los cambios instantáneamente
-- ⬇️ **Descarga instantánea** - Descarga tu QR en formato PNG
-- 🌓 **Modo oscuro** - Soporte para tema claro y oscuro
-- 🔒 **Privacidad** - Todo se procesa en tu navegador, sin enviar datos a servidores
+- **Interfaz sin scroll** - Todo el contenido cabe en la ventana del navegador (100vh), diseño compacto
+- **Modo oscuro sin parpadeo** - Tema aplicado antes del primer render para evitar flash
+- **Personalización completa de colores** - Elige los colores del módulo y fondo del QR
+- **Logo personalizado** - Agrega el logo de tu negocio en el centro del QR
+- **Múltiples estilos** - Cuadrados, puntos o redondeado
+- **Vista previa en tiempo real** - Renderizado con debounce para mejor rendimiento
+- **Exportar en PNG y SVG** - Descarga vectorial o raster en distintos tamaños
+- **Validación de URL** - Detecta y valida URLs automáticamente
+- **Persistencia local** - La configuración se guarda en `localStorage`
+- **Privacidad** - Todo se procesa en el navegador, sin enviar datos a servidores
 
 ## Demo
 
@@ -19,11 +21,10 @@ Una aplicación web moderna y gratuita para generar códigos QR personalizados p
 
 ## Tecnologías Utilizadas
 
-- **Next.js 16** - Framework React para producción
+- **Next.js 15** - Framework React para producción
 - **TypeScript** - Tipado estático
-- **Tailwind CSS** - Estilos modernos
-- **QRCode.js** - Generación de códigos QR
-- **Canvas API** - Manipulación de imágenes
+- **Tailwind CSS** - Estilos modernos y utilitarios
+- **Canvas API** - Generación y renderizado manual de módulos QR con colores y estilos precisos
 
 ## Instalación Local
 

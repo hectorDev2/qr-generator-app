@@ -439,15 +439,15 @@ export default function QRGenerator() {
 
   // ── UI ───────────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-6xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden">
-      <div className="grid md:grid-cols-2">
+    <div className="h-full max-w-6xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden flex flex-col">
+      <div className="grid md:grid-cols-2 flex-1 min-h-0">
 
         {/* ── Panel izquierdo: configuración ── */}
-        <div className="p-8 space-y-6 overflow-y-auto max-h-[85vh] border-r border-gray-100 dark:border-gray-700">
+        <div className="p-5 space-y-4 overflow-y-auto h-full border-r border-gray-100 dark:border-gray-700">
 
           {/* Encabezado con botón reset */}
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-800 dark:text-white">Personalización</h2>
+            <h2 className="text-base font-bold text-gray-800 dark:text-white">Personalización</h2>
             <button
               onClick={handleReset}
               className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex items-center gap-1 transition-colors"
@@ -672,7 +672,7 @@ export default function QRGenerator() {
         </div>
 
         {/* ── Panel derecho: preview ── */}
-        <div className="flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-10">
+        <div className="flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-6 h-full">
 
           {/* Canvas con indicador de carga */}
           <div className="relative">
