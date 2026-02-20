@@ -439,11 +439,11 @@ export default function QRGenerator() {
 
   // ── UI ───────────────────────────────────────────────────────────────────
   return (
-    <div className="h-full max-w-6xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden flex flex-col">
-      <div className="grid md:grid-cols-2 flex-1 min-h-0">
+    <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden">
+      <div className="grid lg:grid-cols-2 lg:items-start">
 
         {/* ── Panel izquierdo: configuración ── */}
-        <div className="p-5 space-y-4 overflow-y-auto h-full border-r border-gray-100 dark:border-gray-700">
+        <div className="p-5 space-y-4 border-b lg:border-b-0 lg:border-r border-gray-100 dark:border-gray-700 lg:overflow-y-auto lg:max-h-[calc(100vh-7rem)]">
 
           {/* Encabezado con botón reset */}
           <div className="flex items-center justify-between">
@@ -672,7 +672,7 @@ export default function QRGenerator() {
         </div>
 
         {/* ── Panel derecho: preview ── */}
-        <div className="flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-6 h-full">
+        <div className="flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-6 lg:sticky lg:top-14 lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-y-auto">
 
           {/* Canvas con indicador de carga */}
           <div className="relative">
@@ -689,8 +689,7 @@ export default function QRGenerator() {
                 ref={canvasRef}
                 width={400}
                 height={400}
-                className="block"
-                style={{ maxWidth: '100%', height: 'auto' }}
+                className="block w-full max-w-[320px] sm:max-w-[360px] lg:max-w-[380px] xl:max-w-[400px] h-auto"
               />
             </div>
           </div>
