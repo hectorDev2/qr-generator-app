@@ -14,14 +14,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://qr-generator-app-rho.vercel.app'),
   title: "Generador de Códigos QR Gratuito | Personaliza con Logo y Colores",
   description: "Crea códigos QR personalizados para tu negocio gratis. Agrega tu logo, personaliza colores y estilos. Descarga en alta calidad. 100% gratuito y sin registro.",
   keywords: ["generador qr", "codigo qr gratis", "qr personalizado", "qr con logo", "crear qr", "qr code generator"],
-  authors: [{ name: "QR Generator" }],
+  authors: [{ name: "QR Studio" }],
   openGraph: {
-    title: "Generador de Códigos QR Gratuito",
-    description: "Crea códigos QR personalizados con logo y colores para tu negocio",
+    title: "Generador de Códigos QR Gratuito | QR Studio",
+    description: "Crea códigos QR personalizados con logo y colores para tu negocio. 100% gratuito y sin registro.",
     type: "website",
+    url: 'https://qr-generator-app-rho.vercel.app',
+    siteName: 'QR Studio',
+    locale: 'es_ES',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Generador de Códigos QR Gratuito | QR Studio',
+    description: 'Crea códigos QR personalizados con logo y colores. 100% gratuito, sin registro, funciona en tu navegador.',
   },
 };
 
