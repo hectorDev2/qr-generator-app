@@ -665,6 +665,34 @@ export default function QRGenerator() {
     }, 'image/png');
   };
 
+  // ── Estilo aleatorio ─────────────────────────────────────────────────────
+  const handleRandomize = () => {
+    const useGradient = Math.random() < 0.45;
+    const randomStyle = STYLES[Math.floor(Math.random() * STYLES.length)].value;
+
+    if (useGradient) {
+      const presets = GRADIENT_PRESETS.filter((p) => p.id !== 'custom');
+      const preset = presets[Math.floor(Math.random() * presets.length)];
+      const dirs: GradientDirection[] = ['horizontal', 'vertical', 'diagonal', 'radial'];
+      const direction = dirs[Math.floor(Math.random() * dirs.length)];
+      setOptions((prev) => ({
+        ...prev,
+        fillMode: 'gradient',
+        gradient: { presetId: preset.id, color1: preset.color1, color2: preset.color2, direction },
+        style: randomStyle,
+      }));
+    } else {
+      const palette = COLOR_PALETTES[Math.floor(Math.random() * COLOR_PALETTES.length)];
+      setOptions((prev) => ({
+        ...prev,
+        fillMode: 'solid',
+        foregroundColor: palette.fg,
+        backgroundColor: palette.bg,
+        style: randomStyle,
+      }));
+    }
+  };
+
   // ── Compartir URL con configuración ─────────────────────────────────────
   const handleShare = async () => {
     const url = buildShareUrl(options, pathname);
@@ -1020,6 +1048,16 @@ export default function QRGenerator() {
             {isGenerating ? 'Generando QR…' : 'Vista previa en tiempo real'}
           </p>
 
+          {/* Botón de estilo aleatorio */}
+          <button
+            onClick={handleRandomize}
+            aria-label="Generar estilo aleatorio"
+            className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-600 dark:hover:border-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all active:scale-95"
+          >
+            <span className="text-lg">🎲</span>
+            Estilo aleatorio
+          </button>
+
           {/* Botones de acción */}
           <div className="mt-3 flex gap-2">
             <button
@@ -1314,6 +1352,32 @@ const GRADIENT_DIRECTIONS = [
   { value: 'vertical',   label: '↓' },
   { value: 'diagonal',   label: '↘' },
   { value: 'radial',     label: '⊙' },
+];
+
+// Paletas de colores curadas — buen contraste y armonía garantizados
+const COLOR_PALETTES: { fg: string; bg: string }[] = [
+  // Fondo claro
+  { fg: '#1d4ed8', bg: '#eff6ff' }, // azul sobre azul claro
+  { fg: '#7c3aed', bg: '#f5f3ff' }, // violeta sobre lavanda
+  { fg: '#dc2626', bg: '#fef2f2' }, // rojo sobre rosa claro
+  { fg: '#059669', bg: '#ecfdf5' }, // verde sobre menta
+  { fg: '#d97706', bg: '#fffbeb' }, // ámbar sobre amarillo claro
+  { fg: '#0891b2', bg: '#ecfeff' }, // cian sobre azul cielo
+  { fg: '#be185d', bg: '#fdf2f8' }, // rosa sobre rosa suave
+  { fg: '#4338ca', bg: '#eef2ff' }, // índigo sobre índigo claro
+  { fg: '#0f172a', bg: '#f8fafc' }, // casi negro sobre blanco azulado
+  { fg: '#7e22ce', bg: '#faf5ff' }, // púrpura sobre violeta claro
+  { fg: '#c2410c', bg: '#fff7ed' }, // naranja quemado sobre crema
+  { fg: '#065f46', bg: '#d1fae5' }, // verde oscuro sobre verde muy claro
+  // Fondo oscuro — inversión de roles
+  { fg: '#60a5fa', bg: '#1e3a5f' }, // azul claro sobre azul marino
+  { fg: '#a78bfa', bg: '#1e1b4b' }, // lavanda sobre índigo oscuro
+  { fg: '#34d399', bg: '#064e3b' }, // esmeralda sobre verde oscuro
+  { fg: '#fbbf24', bg: '#1c1917' }, // dorado sobre casi negro
+  { fg: '#f472b6', bg: '#500724' }, // rosa sobre burdeos
+  { fg: '#38bdf8', bg: '#0c4a6e' }, // celeste sobre azul profundo
+  { fg: '#86efac', bg: '#14532d' }, // verde menta sobre verde bosque
+  { fg: '#fca5a5', bg: '#7f1d1d' }, // salmón sobre rojo oscuro
 ];
 
 const PRESET_COLORS = [
