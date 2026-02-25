@@ -1,12 +1,22 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import QRCode from 'qrcode';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 type QRStyle = 'squares' | 'dots' | 'rounded';
 type DownloadSize = 400 | 800 | 1200;
 type DownloadFormat = 'png' | 'svg';
+type FillMode = 'solid' | 'gradient' | 'image';
+type GradientDirection = 'horizontal' | 'vertical' | 'diagonal' | 'radial';
+
+interface GradientOptions {
+  presetId: string;
+  color1: string;
+  color2: string;
+  direction: GradientDirection;
+}
 
 interface QROptions {
   url: string;
@@ -17,6 +27,9 @@ interface QROptions {
   logoSize: number;
   logoRadius: number;
   errorCorrectionLevel: 'L' | 'M' | 'Q' | 'H';
+  fillMode: FillMode;
+  gradient: GradientOptions;
+  textureImage: string | null;
 }
 
 const STORAGE_KEY = 'qr-generator-options';
@@ -30,6 +43,9 @@ const DEFAULT_OPTIONS: QROptions = {
   logoSize: 22,
   logoRadius: 10,
   errorCorrectionLevel: 'H',
+  fillMode: 'solid',
+  gradient: { presetId: 'ocean', color1: '#1d4ed8', color2: '#7c3aed', direction: 'diagonal' },
+  textureImage: null,
 };
 
 // ── Helpers canvas ───────────────────────────────────────────────────────────
@@ -57,31 +73,138 @@ function isValidUrl(value: string): boolean {
     new URL(value);
     return true;
   } catch {
-    // También permitir texto plano no-URL (ej: "Mi negocio")
     return value.trim().length >= 1;
   }
 }
 
+/** Dibuja los módulos QR en el ctx dado (reutilizado para solid/gradient y offscreen imagen) */
+function drawModules(
+  ctx: CanvasRenderingContext2D,
+  matrix: { get: (row: number, col: number) => number | boolean; size: number },
+  moduleCount: number,
+  moduleSize: number,
+  margin: number,
+  style: QRStyle,
+) {
+  for (let row = 0; row < moduleCount; row++) {
+    for (let col = 0; col < moduleCount; col++) {
+      if (!matrix.get(row, col)) continue;
+      const x = (col + margin) * moduleSize;
+      const y = (row + margin) * moduleSize;
+      switch (style) {
+        case 'dots':
+          ctx.beginPath();
+          ctx.arc(x + moduleSize / 2, y + moduleSize / 2, moduleSize * 0.42, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        case 'rounded':
+          roundRect(ctx, x + 0.5, y + 0.5, moduleSize - 1, moduleSize - 1, moduleSize * 0.35);
+          ctx.fill();
+          break;
+        default:
+          ctx.fillRect(x, y, moduleSize, moduleSize);
+      }
+    }
+  }
+}
+
+/** Crea el fillStyle para solid o gradient */
+function createCanvasFill(
+  ctx: CanvasRenderingContext2D,
+  options: QROptions,
+  size: number,
+): string | CanvasGradient {
+  if (options.fillMode !== 'gradient') return options.foregroundColor;
+  const { color1, color2, direction } = options.gradient;
+  if (direction === 'radial') {
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0, color1);
+    g.addColorStop(1, color2);
+    return g;
+  }
+  const coordsMap: Record<string, [number, number, number, number]> = {
+    horizontal: [0, 0, size, 0],
+    vertical:   [0, 0, 0, size],
+    diagonal:   [0, 0, size, size],
+  };
+  const [x0, y0, x1, y1] = coordsMap[direction] ?? [0, 0, size, size];
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, color1);
+  g.addColorStop(1, color2);
+  return g;
+}
+
+// ── Helpers URL params ────────────────────────────────────────────────────────
+function optionsFromParams(params: URLSearchParams): Partial<QROptions> {
+  const out: Partial<QROptions> = {};
+  const q    = params.get('q');
+  const fg   = params.get('fg');
+  const bg   = params.get('bg');
+  const style = params.get('style');
+  const ecl  = params.get('ecl');
+  const fill = params.get('fill');
+  const gp   = params.get('gp');
+  const gc1  = params.get('gc1');
+  const gc2  = params.get('gc2');
+  const gd   = params.get('gd');
+
+  if (q) out.url = q;
+  if (fg && /^[0-9A-Fa-f]{6}$/.test(fg)) out.foregroundColor = `#${fg}`;
+  if (bg && /^[0-9A-Fa-f]{6}$/.test(bg)) out.backgroundColor = `#${bg}`;
+  if (style === 'squares' || style === 'dots' || style === 'rounded') out.style = style;
+  if (ecl === 'L' || ecl === 'M' || ecl === 'Q' || ecl === 'H') out.errorCorrectionLevel = ecl;
+  if (fill === 'solid' || fill === 'gradient' || fill === 'image') out.fillMode = fill;
+  if (gp || gc1 || gc2 || gd) {
+    const preset = GRADIENT_PRESETS.find((p) => p.id === gp);
+    out.gradient = {
+      presetId:  gp   ?? DEFAULT_OPTIONS.gradient.presetId,
+      color1:    gc1 && /^[0-9A-Fa-f]{6}$/.test(gc1) ? `#${gc1}` : (preset?.color1 ?? DEFAULT_OPTIONS.gradient.color1),
+      color2:    gc2 && /^[0-9A-Fa-f]{6}$/.test(gc2) ? `#${gc2}` : (preset?.color2 ?? DEFAULT_OPTIONS.gradient.color2),
+      direction: (gd === 'horizontal' || gd === 'vertical' || gd === 'diagonal' || gd === 'radial')
+        ? gd : (preset?.direction ?? DEFAULT_OPTIONS.gradient.direction) as GradientDirection,
+    };
+  }
+  return out;
+}
+
+function buildShareUrl(opts: QROptions, pathname: string): string {
+  const base = typeof window !== 'undefined' ? window.location.origin : '';
+  const params = new URLSearchParams();
+  params.set('q', opts.url);
+  params.set('fg', opts.foregroundColor.replace('#', ''));
+  params.set('bg', opts.backgroundColor.replace('#', ''));
+  params.set('style', opts.style);
+  params.set('ecl', opts.errorCorrectionLevel);
+  params.set('fill', opts.fillMode);
+  if (opts.fillMode === 'gradient') {
+    params.set('gp', opts.gradient.presetId);
+    params.set('gc1', opts.gradient.color1.replace('#', ''));
+    params.set('gc2', opts.gradient.color2.replace('#', ''));
+    params.set('gd', opts.gradient.direction);
+  }
+  return `${base}${pathname}?${params.toString()}`;
+}
+
 // ── Hook de persistencia ─────────────────────────────────────────────────────
-function usePersistedOptions() {
+function usePersistedOptions(urlOverrides: Partial<QROptions>) {
   const [options, setOptionsState] = useState<QROptions>(() => {
-    if (typeof window === 'undefined') return DEFAULT_OPTIONS;
+    if (typeof window === 'undefined') return { ...DEFAULT_OPTIONS, ...urlOverrides };
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as Partial<QROptions>;
-        return { ...DEFAULT_OPTIONS, ...parsed };
+        return { ...DEFAULT_OPTIONS, ...parsed, ...urlOverrides };
       }
     } catch { /* noop */ }
-    return DEFAULT_OPTIONS;
+    return { ...DEFAULT_OPTIONS, ...urlOverrides };
   });
 
   const setOptions = useCallback((updater: QROptions | ((prev: QROptions) => QROptions)) => {
     setOptionsState((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       try {
-        // No persistir el logo (puede ser muy grande para localStorage)
-        const { logo: _logo, ...toSave } = next;
+        // No persistir logo ni textureImage (pueden ser muy grandes)
+        const { logo: _logo, textureImage: _tex, ...toSave } = next;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
       } catch { /* noop */ }
       return next;
@@ -93,19 +216,27 @@ function usePersistedOptions() {
 
 // ── Componente principal ─────────────────────────────────────────────────────
 export default function QRGenerator() {
-  const [options, setOptions] = usePersistedOptions();
-  const [urlInput, setUrlInput] = useState(options.url);  // input controlado (para debounce)
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const urlOverrides = optionsFromParams(searchParams);
+  const [options, setOptions] = usePersistedOptions(urlOverrides);
+  const [urlInput, setUrlInput] = useState(options.url);
   const [urlError, setUrlError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState<'idle' | 'downloading' | 'done'>('idle');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
+  const [shareStatus, setShareStatus] = useState<'idle' | 'copied'>('idle');
   const [downloadSize, setDownloadSize] = useState<DownloadSize>(800);
   const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>('png');
   const [isDragging, setIsDragging] = useState(false);
+  const [isTextureDragging, setIsTextureDragging] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textureInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const logoLoadRef = useRef<number>(0); // incrementa con cada render para cancelar cargas viejas
+  const logoLoadRef = useRef<number>(0);
 
   // ── Debounce en el campo URL ─────────────────────────────────────────────
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -131,7 +262,7 @@ export default function QRGenerator() {
     if (!ctx) return;
 
     setIsGenerating(true);
-    const thisLoad = ++logoLoadRef.current; // "token" de esta generación
+    const thisLoad = ++logoLoadRef.current;
 
     try {
       const qrData = await QRCode.create(options.url, {
@@ -152,40 +283,38 @@ export default function QRGenerator() {
       ctx.fillStyle = options.backgroundColor;
       ctx.fillRect(0, 0, canvasSize, canvasSize);
 
-      // 2. Módulos QR
-      ctx.fillStyle = options.foregroundColor;
-
-      for (let row = 0; row < moduleCount; row++) {
-        for (let col = 0; col < moduleCount; col++) {
-          if (!matrix.get(row, col)) continue;
-          const x = (col + margin) * moduleSize;
-          const y = (row + margin) * moduleSize;
-
-          switch (options.style) {
-            case 'dots': {
-              ctx.beginPath();
-              ctx.arc(x + moduleSize / 2, y + moduleSize / 2, moduleSize * 0.42, 0, Math.PI * 2);
-              ctx.fill();
-              break;
-            }
-            case 'rounded': {
-              roundRect(ctx, x + 0.5, y + 0.5, moduleSize - 1, moduleSize - 1, moduleSize * 0.35);
-              ctx.fill();
-              break;
-            }
-            default: {
-              ctx.fillRect(x, y, moduleSize, moduleSize);
-              break;
-            }
-          }
-        }
+      // 2. Módulos QR — según modo de relleno
+      if (options.fillMode === 'image' && options.textureImage) {
+        // Offscreen con source-in para aplicar textura
+        const off = document.createElement('canvas');
+        off.width = canvasSize;
+        off.height = canvasSize;
+        const offCtx = off.getContext('2d')!;
+        offCtx.fillStyle = '#000000';
+        drawModules(offCtx, matrix, moduleCount, moduleSize, margin, options.style);
+        offCtx.globalCompositeOperation = 'source-in';
+        await new Promise<void>((res) => {
+          const img = new Image();
+          img.onload = () => {
+            if (thisLoad !== logoLoadRef.current) { res(); return; }
+            offCtx.drawImage(img, 0, 0, canvasSize, canvasSize);
+            res();
+          };
+          img.onerror = () => res();
+          img.src = options.textureImage!;
+        });
+        if (thisLoad !== logoLoadRef.current) return;
+        ctx.drawImage(off, 0, 0);
+      } else {
+        ctx.fillStyle = createCanvasFill(ctx, options, canvasSize);
+        drawModules(ctx, matrix, moduleCount, moduleSize, margin, options.style);
       }
 
-      // 3. Logo (si hay uno) — cancelamos si llegó una generación más nueva
+      // 3. Logo (si hay uno)
       if (options.logo) {
         const img = new Image();
         img.onload = () => {
-          if (thisLoad !== logoLoadRef.current) return; // descartamos si hay una carga más reciente
+          if (thisLoad !== logoLoadRef.current) return;
           const logoPx = canvasSize * (options.logoSize / 100);
           const lx = (canvasSize - logoPx) / 2;
           const ly = (canvasSize - logoPx) / 2;
@@ -230,6 +359,26 @@ export default function QRGenerator() {
     setUrlInput(options.url);
   }, []); // solo al montar
 
+  // Sync URL params (sin logo/textureImage — demasiado grandes)
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set('q', options.url);
+    params.set('fg', options.foregroundColor.replace('#', ''));
+    params.set('bg', options.backgroundColor.replace('#', ''));
+    params.set('style', options.style);
+    params.set('ecl', options.errorCorrectionLevel);
+    params.set('fill', options.fillMode);
+    if (options.fillMode === 'gradient') {
+      params.set('gp', options.gradient.presetId);
+      params.set('gc1', options.gradient.color1.replace('#', ''));
+      params.set('gc2', options.gradient.color2.replace('#', ''));
+      params.set('gd', options.gradient.direction);
+    }
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.url, options.foregroundColor, options.backgroundColor, options.style,
+      options.errorCorrectionLevel, options.fillMode, options.gradient]);
+
   // ── Descarga PNG a tamaño personalizado ─────────────────────────────────
   const downloadPNG = async (size: DownloadSize) => {
     if (!options.url.trim()) return;
@@ -252,27 +401,24 @@ export default function QRGenerator() {
 
     ctx.fillStyle = options.backgroundColor;
     ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = options.foregroundColor;
 
-    for (let row = 0; row < moduleCount; row++) {
-      for (let col = 0; col < moduleCount; col++) {
-        if (!matrix.get(row, col)) continue;
-        const x = (col + margin) * moduleSize;
-        const y = (row + margin) * moduleSize;
-        switch (options.style) {
-          case 'dots':
-            ctx.beginPath();
-            ctx.arc(x + moduleSize / 2, y + moduleSize / 2, moduleSize * 0.42, 0, Math.PI * 2);
-            ctx.fill();
-            break;
-          case 'rounded':
-            roundRect(ctx, x + 0.5, y + 0.5, moduleSize - 1, moduleSize - 1, moduleSize * 0.35);
-            ctx.fill();
-            break;
-          default:
-            ctx.fillRect(x, y, moduleSize, moduleSize);
-        }
-      }
+    if (options.fillMode === 'image' && options.textureImage) {
+      const off2 = document.createElement('canvas');
+      off2.width = size; off2.height = size;
+      const offCtx = off2.getContext('2d')!;
+      offCtx.fillStyle = '#000000';
+      drawModules(offCtx, matrix, moduleCount, moduleSize, margin, options.style);
+      offCtx.globalCompositeOperation = 'source-in';
+      await new Promise<void>((res) => {
+        const img = new Image();
+        img.onload = () => { offCtx.drawImage(img, 0, 0, size, size); res(); };
+        img.onerror = () => res();
+        img.src = options.textureImage!;
+      });
+      ctx.drawImage(off2, 0, 0);
+    } else {
+      ctx.fillStyle = createCanvasFill(ctx, options, size);
+      drawModules(ctx, matrix, moduleCount, moduleSize, margin, options.style);
     }
 
     // Logo escalado
@@ -324,7 +470,6 @@ export default function QRGenerator() {
     const moduleSize = svgSize / totalModules;
 
     let paths = '';
-
     for (let row = 0; row < moduleCount; row++) {
       for (let col = 0; col < moduleCount; col++) {
         if (!matrix.get(row, col)) continue;
@@ -352,7 +497,32 @@ export default function QRGenerator() {
       }
     }
 
-    // Logo como imagen embebida en SVG (base64)
+    // Gradiente SVG
+    let svgDefs = '';
+    let fillAttr = options.foregroundColor;
+
+    if (options.fillMode === 'gradient') {
+      const { color1, color2, direction } = options.gradient;
+      if (direction === 'radial') {
+        svgDefs = `<defs><radialGradient id="qr-grad" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="${color1}"/>
+    <stop offset="100%" stop-color="${color2}"/>
+  </radialGradient></defs>`;
+      } else {
+        const coords: Record<string, string> = {
+          horizontal: 'x1="0%" y1="0%" x2="100%" y2="0%"',
+          vertical:   'x1="0%" y1="0%" x2="0%" y2="100%"',
+          diagonal:   'x1="0%" y1="0%" x2="100%" y2="100%"',
+        };
+        svgDefs = `<defs><linearGradient id="qr-grad" ${coords[direction] ?? coords.diagonal}>
+    <stop offset="0%" stop-color="${color1}"/>
+    <stop offset="100%" stop-color="${color2}"/>
+  </linearGradient></defs>`;
+      }
+      fillAttr = 'url(#qr-grad)';
+    }
+
+    // Logo como imagen embebida en SVG
     let logoElement = '';
     if (options.logo) {
       const logoPx = svgSize * (options.logoSize / 100);
@@ -380,8 +550,9 @@ export default function QRGenerator() {
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
   viewBox="0 0 ${svgSize} ${svgSize}" width="${svgSize}" height="${svgSize}">
+  ${svgDefs}
   <rect width="${svgSize}" height="${svgSize}" fill="${options.backgroundColor}"/>
-  <g fill="${options.foregroundColor}">
+  <g fill="${fillAttr}">
     ${paths}
   </g>
   ${logoElement}
@@ -428,19 +599,10 @@ export default function QRGenerator() {
     loadLogoFile(file);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); };
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
+    e.preventDefault(); setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
     if (file) loadLogoFile(file);
   };
@@ -450,15 +612,73 @@ export default function QRGenerator() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // ── Textura upload / remove ──────────────────────────────────────────────
+  const loadTextureFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setOptions((prev) => ({ ...prev, textureImage: ev.target?.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleTextureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    loadTextureFile(file);
+  };
+
+  const handleTextureDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsTextureDragging(true); };
+  const handleTextureDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsTextureDragging(false); };
+  const handleTextureDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setIsTextureDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) loadTextureFile(file);
+  };
+
+  const handleRemoveTexture = () => {
+    setOptions((prev) => ({ ...prev, textureImage: null }));
+    if (textureInputRef.current) textureInputRef.current.value = '';
+  };
+
   const handleReset = () => {
     setOptions(DEFAULT_OPTIONS);
     setUrlInput(DEFAULT_OPTIONS.url);
     setUrlError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (textureInputRef.current) textureInputRef.current.value = '';
+  };
+
+  // ── Copiar QR al portapapeles ────────────────────────────────────────────
+  const handleCopy = () => {
+    if (!canvasRef.current) return;
+    setCopyStatus('copying');
+    canvasRef.current.toBlob(async (blob) => {
+      if (!blob) { setCopyStatus('idle'); return; }
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        setCopyStatus('copied');
+        setTimeout(() => setCopyStatus('idle'), 2000);
+      } catch {
+        setCopyStatus('idle');
+      }
+    }, 'image/png');
+  };
+
+  // ── Compartir URL con configuración ─────────────────────────────────────
+  const handleShare = async () => {
+    const url = buildShareUrl(options, pathname);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareStatus('copied');
+      setTimeout(() => setShareStatus('idle'), 2000);
+    } catch { /* noop */ }
   };
 
   const set = (key: keyof QROptions) => (val: QROptions[keyof QROptions]) =>
     setOptions((prev) => ({ ...prev, [key]: val }));
+
+  const svgDisabled = options.fillMode === 'image';
 
   // ── UI ───────────────────────────────────────────────────────────────────
   return (
@@ -506,38 +726,90 @@ export default function QRGenerator() {
             )}
           </div>
 
-          {/* Colores */}
+          {/* ── Colores con tabs ── */}
           <div>
-            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Colores</p>
-            <div className="grid grid-cols-2 gap-4">
-              <ColorPicker
-                label="Color del QR"
-                value={options.foregroundColor}
-                onChange={(v) => set('foregroundColor')(v)}
+            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Colores del QR</p>
+
+            {/* Tabs */}
+            <div className="flex gap-1 mb-3 bg-gray-100 dark:bg-gray-700 p-1 rounded-lg">
+              {([
+                { id: 'solid',    label: 'Sólido' },
+                { id: 'gradient', label: 'Degradado' },
+                { id: 'image',    label: 'Imagen' },
+              ] as { id: FillMode; label: string }[]).map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => set('fillMode')(id)}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    options.fillMode === id
+                      ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-white shadow-sm'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab: Sólido */}
+            {options.fillMode === 'solid' && (
+              <div className="space-y-3">
+                <ColorPicker
+                  label="Color del QR"
+                  value={options.foregroundColor}
+                  onChange={(v) => set('foregroundColor')(v)}
+                />
+                <div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Colores sugeridos</p>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        title={color}
+                        aria-label={`Seleccionar color ${color}`}
+                        onClick={() => set('foregroundColor')(color)}
+                        style={{ backgroundColor: color }}
+                        className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
+                          options.foregroundColor === color
+                            ? 'border-blue-500 scale-110 shadow-md'
+                            : 'border-white shadow-sm'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab: Degradado */}
+            {options.fillMode === 'gradient' && (
+              <GradientPicker
+                value={options.gradient}
+                onChange={(g) => setOptions((prev) => ({ ...prev, gradient: g }))}
               />
+            )}
+
+            {/* Tab: Imagen */}
+            {options.fillMode === 'image' && (
+              <TexturePicker
+                value={options.textureImage}
+                inputRef={textureInputRef}
+                isDragging={isTextureDragging}
+                onUpload={handleTextureUpload}
+                onRemove={handleRemoveTexture}
+                onDragOver={handleTextureDragOver}
+                onDragLeave={handleTextureDragLeave}
+                onDrop={handleTextureDrop}
+              />
+            )}
+
+            {/* Color de fondo — siempre visible */}
+            <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
               <ColorPicker
                 label="Color de Fondo"
                 value={options.backgroundColor}
                 onChange={(v) => set('backgroundColor')(v)}
               />
-            </div>
-            <div className="mt-3">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Colores sugeridos</p>
-              <div className="flex flex-wrap gap-2">
-                {PRESET_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    title={color}
-                    onClick={() => set('foregroundColor')(color)}
-                    style={{ backgroundColor: color }}
-                    className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
-                      options.foregroundColor === color
-                        ? 'border-blue-500 scale-110 shadow-md'
-                        : 'border-white shadow-sm'
-                    }`}
-                  />
-                ))}
-              </div>
             </div>
           </div>
 
@@ -545,7 +817,7 @@ export default function QRGenerator() {
           <div>
             <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Estilo del QR</p>
             <div className="grid grid-cols-3 gap-2">
-              {STYLES.map(({ value, label, preview }) => (
+              {STYLES.map(({ value, label }) => (
                 <button
                   key={value}
                   onClick={() => set('style')(value)}
@@ -555,7 +827,9 @@ export default function QRGenerator() {
                       : 'border-gray-200 text-gray-600 hover:border-gray-300 dark:border-gray-600 dark:text-gray-400'
                   }`}
                 >
-                  <StylePreview type={value} color={options.foregroundColor} />
+                  <StylePreview type={value} color={
+                    options.fillMode === 'gradient' ? options.gradient.color1 : options.foregroundColor
+                  } />
                   <span>{label}</span>
                 </button>
               ))}
@@ -642,17 +916,28 @@ export default function QRGenerator() {
                 <button
                   key={fmt}
                   onClick={() => setDownloadFormat(fmt)}
+                  disabled={fmt === 'svg' && svgDisabled}
+                  title={fmt === 'svg' && svgDisabled ? 'Modo imagen solo disponible en PNG' : undefined}
                   className={`py-2 rounded-lg text-sm font-semibold transition-all ${
-                    downloadFormat === fmt
+                    fmt === 'svg' && svgDisabled
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50 dark:bg-gray-700'
+                      : downloadFormat === fmt
                       ? 'bg-blue-600 text-white shadow'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400'
                   }`}
                 >
                   {fmt.toUpperCase()}
-                  {fmt === 'svg' && <span className="ml-1 text-xs font-normal opacity-75">vectorial</span>}
+                  {fmt === 'svg' && !svgDisabled && <span className="ml-1 text-xs font-normal opacity-75">vectorial</span>}
+                  {fmt === 'svg' && svgDisabled && <span className="ml-1 text-xs font-normal opacity-60">no disponible</span>}
                 </button>
               ))}
             </div>
+
+            {svgDisabled && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <span>ℹ</span> Modo imagen solo soportado en PNG
+              </p>
+            )}
 
             {/* Tamaño (solo PNG) */}
             {downloadFormat === 'png' && (
@@ -673,7 +958,7 @@ export default function QRGenerator() {
               </div>
             )}
 
-            {downloadFormat === 'svg' && (
+            {downloadFormat === 'svg' && !svgDisabled && (
               <p className="text-xs text-gray-400 flex items-center gap-1">
                 <span>ℹ</span> SVG es vectorial — escala sin perder calidad, ideal para impresión
               </p>
@@ -709,9 +994,9 @@ export default function QRGenerator() {
         <div className="flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-6 lg:sticky lg:top-14 lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-y-auto">
 
           {/* Canvas con indicador de carga */}
-          <div className="relative">
+          <div className="relative" role="img" aria-label="Código QR generado">
             {isGenerating && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-black/40 rounded-2xl z-10">
+              <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-black/40 rounded-2xl z-10" aria-hidden="true">
                 <span className="text-2xl animate-spin">⟳</span>
               </div>
             )}
@@ -724,19 +1009,49 @@ export default function QRGenerator() {
                 width={400}
                 height={400}
                 className="block w-full max-w-[320px] sm:max-w-[360px] lg:max-w-[380px] xl:max-w-[400px] h-auto"
+                aria-hidden="true"
               />
             </div>
           </div>
 
           {/* Info de resolución */}
-          <p className="mt-5 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
-            Vista previa en tiempo real
+          <p className="mt-5 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1.5" aria-live="polite">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" aria-hidden="true" />
+            {isGenerating ? 'Generando QR…' : 'Vista previa en tiempo real'}
           </p>
+
+          {/* Botones de acción */}
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={handleCopy}
+              disabled={copyStatus === 'copying' || isGenerating}
+              aria-label="Copiar QR como imagen al portapapeles"
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-all ${
+                copyStatus === 'copied'
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              {copyStatus === 'copying' ? <span className="animate-spin">⟳</span> : copyStatus === 'copied' ? '✓' : '⎘'}
+              {copyStatus === 'copied' ? '¡Copiado!' : 'Copiar imagen'}
+            </button>
+            <button
+              onClick={handleShare}
+              aria-label="Copiar URL de configuración al portapapeles"
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-all ${
+                shareStatus === 'copied'
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              {shareStatus === 'copied' ? '✓' : '🔗'}
+              {shareStatus === 'copied' ? '¡URL copiada!' : 'Compartir'}
+            </button>
+          </div>
 
           {/* Info de persistencia */}
           <p className="mt-2 text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
-            <span>💾</span> Configuración guardada automáticamente
+            <span aria-hidden="true">💾</span> Configuración guardada automáticamente
           </p>
         </div>
       </div>
@@ -825,7 +1140,182 @@ function StylePreview({ type, color }: { type: QRStyle; color: string }) {
   );
 }
 
+/** Selector de gradiente: presets + custom + dirección */
+function GradientPicker({
+  value,
+  onChange,
+}: {
+  value: GradientOptions;
+  onChange: (g: GradientOptions) => void;
+}) {
+  const isCustom = value.presetId === 'custom';
+
+  const selectPreset = (preset: typeof GRADIENT_PRESETS[number]) => {
+    onChange({
+      presetId: preset.id,
+      color1: preset.color1,
+      color2: preset.color2,
+      direction: preset.direction as GradientDirection,
+    });
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Grid de presets */}
+      <div className="grid grid-cols-4 gap-1.5">
+        {GRADIENT_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            onClick={() => selectPreset(preset)}
+            aria-label={`Gradiente ${preset.name}`}
+            title={preset.name}
+            className={`relative h-10 rounded-lg overflow-hidden border-2 transition-all ${
+              value.presetId === preset.id
+                ? 'border-blue-500 scale-105 shadow-md'
+                : 'border-transparent hover:border-gray-300 dark:hover:border-gray-500'
+            }`}
+            style={preset.id !== 'custom' ? {
+              background: preset.direction === 'radial'
+                ? `radial-gradient(circle, ${preset.color1}, ${preset.color2})`
+                : preset.direction === 'vertical'
+                ? `linear-gradient(to bottom, ${preset.color1}, ${preset.color2})`
+                : preset.direction === 'horizontal'
+                ? `linear-gradient(to right, ${preset.color1}, ${preset.color2})`
+                : `linear-gradient(135deg, ${preset.color1}, ${preset.color2})`,
+            } : {
+              background: 'linear-gradient(135deg, #6366f1, #ec4899)',
+            }}
+          >
+            <span className="absolute inset-0 flex items-end justify-center pb-1">
+              <span className="text-[9px] font-bold text-white drop-shadow-sm">
+                {preset.name}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Pickers solo si "Personalizar" */}
+      {isCustom && (
+        <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
+          <ColorPicker
+            label="Color 1"
+            value={value.color1}
+            onChange={(c) => onChange({ ...value, color1: c })}
+          />
+          <ColorPicker
+            label="Color 2"
+            value={value.color2}
+            onChange={(c) => onChange({ ...value, color2: c })}
+          />
+        </div>
+      )}
+
+      {/* Dirección */}
+      <div>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">Dirección</p>
+        <div className="flex gap-1.5">
+          {GRADIENT_DIRECTIONS.map(({ value: dir, label }) => (
+            <button
+              key={dir}
+              onClick={() => onChange({ ...value, direction: dir as GradientDirection })}
+              title={dir}
+              disabled={dir === 'radial' ? false : false}
+              className={`flex-1 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                value.direction === dir
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Selector de textura por imagen */
+function TexturePicker({
+  value,
+  inputRef,
+  isDragging,
+  onUpload,
+  onRemove,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}: {
+  value: string | null;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isDragging: boolean;
+  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRemove: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      {!value ? (
+        <label
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+            isDragging
+              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 scale-[1.01]'
+              : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+          }`}
+        >
+          <span className="text-2xl mb-1">{isDragging ? '📂' : '🎨'}</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {isDragging ? 'Suelta la textura aquí' : 'Arrastra o haz clic para subir'}
+          </span>
+          <span className="text-xs text-gray-400 mt-0.5">PNG · JPG · SVG</span>
+          <input ref={inputRef} type="file" accept="image/*" onChange={onUpload} className="hidden" />
+        </label>
+      ) : (
+        <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-xl">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={value} alt="Textura" className="w-12 h-12 object-cover rounded-lg border border-gray-200 dark:border-gray-600" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Textura cargada</p>
+            <p className="text-xs text-gray-400 mt-0.5">Se aplica como relleno del QR</p>
+          </div>
+          <button
+            onClick={onRemove}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            title="Quitar textura"
+          >✕</button>
+        </div>
+      )}
+      <p className="text-xs text-gray-400 dark:text-gray-500">
+        La imagen se recorta en la forma del QR. Solo disponible en PNG.
+      </p>
+    </div>
+  );
+}
+
 // ── Constantes ────────────────────────────────────────────────────────────────
+const GRADIENT_PRESETS = [
+  { id: 'ocean',   name: 'Océano',      color1: '#1d4ed8', color2: '#7c3aed', direction: 'diagonal'   },
+  { id: 'fire',    name: 'Fuego',       color1: '#dc2626', color2: '#f97316', direction: 'diagonal'   },
+  { id: 'forest',  name: 'Bosque',      color1: '#166534', color2: '#1d4ed8', direction: 'diagonal'   },
+  { id: 'gray',    name: 'Gris',        color1: '#111827', color2: '#6b7280', direction: 'diagonal'   },
+  { id: 'sunset',  name: 'Atardecer',  color1: '#be185d', color2: '#f97316', direction: 'diagonal'   },
+  { id: 'neon',    name: 'Neón',        color1: '#06b6d4', color2: '#a855f7', direction: 'radial'     },
+  { id: 'custom',  name: 'Custom',      color1: '#000000', color2: '#ffffff', direction: 'horizontal' },
+];
+
+const GRADIENT_DIRECTIONS = [
+  { value: 'horizontal', label: '→' },
+  { value: 'vertical',   label: '↓' },
+  { value: 'diagonal',   label: '↘' },
+  { value: 'radial',     label: '⊙' },
+];
+
 const PRESET_COLORS = [
   '#000000', '#1d4ed8', '#0369a1', '#065f46',
   '#7c3aed', '#be185d', '#b45309', '#dc2626',
