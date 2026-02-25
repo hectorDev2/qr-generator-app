@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import QRGenerator from '@/components/QRGenerator';
 import ThemeToggle from '@/components/ThemeToggle';
 
@@ -47,7 +48,13 @@ export default function Home() {
 
         {/* El generador */}
         <div className="flex-1">
-          <QRGenerator />
+          <Suspense fallback={
+            <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-xl h-96 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
+              Cargando…
+            </div>
+          }>
+            <QRGenerator />
+          </Suspense>
         </div>
       </main>
 
@@ -60,7 +67,7 @@ export default function Home() {
           </span>
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
-            100% en tu navegador · Sin servidores · Privado
+            100% en tu navegador · Analytics anónimo con Vercel · Sin cookies
           </span>
         </div>
       </footer>
